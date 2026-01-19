@@ -1,0 +1,127 @@
+* {
+    box-sizing: border-box;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+body {
+    margin: 0;
+    height: 100vh;
+    background: #0f172a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.container {
+    background: #ffffff;
+    width: 360px;
+    padding: 30px;
+    border-radius: 6px;
+    text-align: center;
+}
+
+h1 {
+    font-size: 20px;
+    margin-bottom: 5px;
+}
+
+h2 {
+    font-size: 16px;
+    font-weight: normal;
+    margin-bottom: 25px;
+    color: #555;
+}
+
+input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+button {
+    width: 100%;
+    padding: 10px;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #1e40af;
+}
+
+.options {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 15px;
+}
+
+.options a {
+    text-decoration: none;
+    color: #2563eb;
+}
+
+.link {
+    font-size: 13px;
+    margin-top: 15px;
+}
+
+.link a {
+    color: #2563eb;
+    text-decoration: none;
+}
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background-color: #0f4c45;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.signup-wrapper {
+    width: 100%;
+    text-align: center;
+}
+
+.title {
+    color: white;
+    margin-bottom: 20px;
+}
+
+.signup-card {
+    background-color: #3a8f89;
+    width: 380px;
+    margin: auto;
+    padding: 30px;
+    border-radius: 6px;
+}
+
+.signup-card input,
+.signup-card select {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: none;
+    border-radius: 4px;
+}
+
+.signup-card button {
+    width: 120px;
+    padding: 10px;
+    background-color: #0f4c45;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.signup-card button:hover {
+    background-color: #093a35;
+}

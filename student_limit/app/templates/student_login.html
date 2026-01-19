@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Student Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+
+<div class="container">
+    <h1>Campus Connect-Care</h1>
+    <h2>LOGIN</h2>
+
+    <form method="POST">
+        <input type="email" name="email" placeholder="College Email" required>
+        <input type="password" name="password" placeholder="Password" required>
+
+        <div class="options">
+            <label>
+                <input type="checkbox"> Remember Me
+            </label>
+            <a href="{{ url_for('student.forgot_password') }}">Forgot Password ?</a>
+        </div>
+
+        <button type="submit">LOGIN</button>
+    </form>
+
+    <p class="link">
+        New Student?
+        <a href="{{ url_for('student.signup') }}">Sign Up</a>
+    </p>
+</div>
+
+</body>
+</html>

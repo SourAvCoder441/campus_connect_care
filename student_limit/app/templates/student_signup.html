@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sign Up | Campus Connect-Care</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+
+<div class="signup-wrapper">
+    <h2 class="title">Sign Up</h2>
+
+    <div class="signup-card">
+        <form method="POST">
+
+            <input
+                type="text"
+                name="username"
+                placeholder="Username"
+                required
+            >
+
+            <select name="department" required>
+                <option value="" disabled selected>Department</option>
+                <option value="CSE">Computer Science and Engineering</option>
+                <option value="EEE">Electrical and Electronics Engineering</option>
+                <option value="ECE">Electronics and Communication Engineering</option>
+                <option value="ME">Mechanical Engineering</option>
+                <option value="IT">Information Technology</option>
+            </select>
+
+            <select name="year" required>
+                <option value="" disabled selected>Year of Study</option>
+                <option value="1">First Year</option>
+                <option value="2">Second Year</option>
+                <option value="3">Third Year</option>
+                <option value="4">Fourth Year</option>
+            </select>
+
+            <input
+                type="email"
+                name="email"
+                placeholder="Email ID"
+                required
+            >
+
+            <button type="submit">Sign Up</button>
+
+        </form>
+    </div>
+</div>
+
+</body>
+</html>
