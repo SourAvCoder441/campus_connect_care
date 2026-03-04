@@ -1,3 +1,11 @@
+# Database
+psycopg2-binary>=2.9.0
+python-dotenv>=1.0.0
+
+# Web API
+flask>=3.0.0
+flask-cors>=4.0.0
+
 # Core SNMP & config
 pysnmp>=4.4.12
 PyYAML>=6.0
@@ -5,13 +13,16 @@ PyYAML>=6.0
 # Topology & graph logic
 networkx>=3.2
 
-# System & probing (next phases)
+# System & probing
 psutil>=5.9.8
 scapy>=2.5.0
 
-# API & GUI backend (later)
+# API & GUI backend
 fastapi>=0.110.0
 uvicorn>=0.29.0
 
-# HTTP/API access (Zabbix integration, future)
+# HTTP/API access
 requests>=2.31.0
+
+# GUI Desktop
+PySide6>=6.6.0
