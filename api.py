@@ -28,7 +28,6 @@ def init_db():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Create users table if not exists
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -40,7 +39,6 @@ def init_db():
         );
     """)
 
-    # Create diagnostic_sessions if not exists
     cur.execute("""
         CREATE TABLE IF NOT EXISTS diagnostic_sessions (
             id SERIAL PRIMARY KEY,
@@ -63,7 +61,6 @@ def init_db():
         );
     """)
 
-    # Create diagnostic_devices if not exists
     cur.execute("""
         CREATE TABLE IF NOT EXISTS diagnostic_devices (
             id SERIAL PRIMARY KEY,
@@ -89,7 +86,6 @@ def init_db():
         );
     """)
 
-    # Create detected_faults if not exists
     cur.execute("""
         CREATE TABLE IF NOT EXISTS detected_faults (
             id SERIAL PRIMARY KEY,
@@ -108,129 +104,28 @@ def init_db():
             resolved_at TIMESTAMP,
             resolved_by INTEGER REFERENCES users(id),
             resolution_notes TEXT,
-            detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status VARCHAR(20) DEFAULT 'Open'
         );
     """)
 
-    # Insert sample users if empty
+    # Add status column if it doesn't exist (migration)
+    cur.execute("""
+        ALTER TABLE detected_faults
+        ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'Open';
+    """)
+
+    # Sync status with is_resolved
+    cur.execute("""
+        UPDATE detected_faults SET status = 'Resolved' WHERE is_resolved = TRUE AND status = 'Open';
+    """)
+
     cur.execute("SELECT COUNT(*) FROM users")
     if cur.fetchone()[0] == 0:
         cur.execute("""
             INSERT INTO users (username, password_hash, role, email) VALUES
             ('netadmin', 'campus123', 'NetworkAdmin', 'netadmin@gec.edu'),
             ('secadmin', 'campus123', 'SecurityAdmin', 'secadmin@gec.edu')
-        """)
-
-    # Insert sample diagnostic session if empty
-    cur.execute("SELECT COUNT(*) FROM diagnostic_sessions")
-    if cur.fetchone()[0] == 0:
-        cur.execute("""
-            INSERT INTO diagnostic_sessions 
-            (user_id, status, scan_type, target_subnet, summary,
-             total_devices_found, total_faults_detected, 
-             critical_faults, high_faults, medium_faults, low_faults,
-             end_time)
-            VALUES
-            (1, 'completed', 'full', '192.168.10.0/24',
-             'Full network scan completed. 2 critical faults detected.',
-             7, 4, 2, 2, 0, 0, NOW()),
-            (1, 'completed', 'full', '192.168.99.0/24',
-             'Quick scan completed. 1 fault detected.',
-             3, 1, 0, 1, 0, 0, NOW() - INTERVAL '2 hours')
-        """)
-
-        # Insert sample devices
-        cur.execute("""
-            INSERT INTO diagnostic_devices
-            (session_id, hostname, ip_address, mac_address, subnet,
-             switch_ip, switch_port, status, device_type,
-             responds_to_ping, in_arp, response_time_ms)
-            VALUES
-            (1, 'Core-Switch', '192.168.10.1', 'AA:BB:CC:DD:EE:01',
-             '192.168.10.0/24', NULL, NULL, 'active', 'switch',
-             TRUE, TRUE, 1.2),
-            (1, 'Camera-Block-A', '192.168.10.10', 'AA:BB:CC:DD:EE:02',
-             '192.168.10.0/24', '192.168.10.1', 'Gi0/1', 'active', 'camera',
-             TRUE, TRUE, 5.4),
-            (1, 'Camera-Block-B', '192.168.10.11', 'AA:BB:CC:DD:EE:03',
-             '192.168.10.0/24', '192.168.10.1', 'Gi0/2', 'unreachable', 'camera',
-             FALSE, FALSE, NULL),
-            (1, 'DVR-Main', '192.168.10.20', 'AA:BB:CC:DD:EE:04',
-             '192.168.10.0/24', '192.168.10.1', 'Gi0/3', 'active', 'dvr',
-             TRUE, TRUE, 3.1),
-            (1, 'PC-Lab1', '192.168.10.30', 'AA:BB:CC:DD:EE:05',
-             '192.168.10.0/24', '192.168.10.1', 'Gi0/4', 'active', 'pc',
-             TRUE, TRUE, 2.8),
-            (1, 'PC-Lab2', '192.168.10.31', 'AA:BB:CC:DD:EE:06',
-             '192.168.10.0/24', '192.168.10.1', 'Gi0/5', 'active', 'pc',
-             TRUE, TRUE, 2.9),
-            (1, 'AP-Library', '192.168.10.50', 'AA:BB:CC:DD:EE:07',
-             '192.168.10.0/24', '192.168.10.1', 'Gi0/6', 'active', 'ap',
-             TRUE, TRUE, 1.8)
-        """)
-
-        # Insert sample faults
-        cur.execute("""
-            INSERT INTO detected_faults
-            (session_id, fault_type, severity, primary_device_id,
-             affected_ips, description, troubleshooting_steps,
-             is_resolved, confidence)
-            VALUES
-            (1, 'DEVICE_UNREACHABLE', 'critical', 3,
-             ARRAY['192.168.10.11'],
-             'Camera-Block-B does not respond to ICMP ping. Device may be powered off or cable disconnected.',
-             ARRAY[
-               'Check if device is powered on (LED indicators)',
-               'Verify network cable is connected securely',
-               'Check switch port status - is it up/down?',
-               'Verify VLAN configuration on switch port',
-               'Check for IP address conflicts',
-               'Try pinging from different source',
-               'Replace cable if suspecting physical issue'
-             ],
-             FALSE, 0.95),
-
-            (1, 'IP_CONFLICT', 'critical', 5,
-             ARRAY['192.168.10.30', '192.168.10.30'],
-             'IP conflict detected at 192.168.10.30. Multiple devices responding to same IP address.',
-             ARRAY[
-               'Identify all devices with conflicting IP (check ARP table)',
-               'Check DHCP server logs for duplicate lease assignments',
-               'Verify if any devices have static IPs in DHCP range',
-               'Change IP of one conflicting device temporarily',
-               'For static devices, assign unique IP outside DHCP range',
-               'For DHCP devices, add MAC reservation',
-               'Clear ARP cache on firewall after changes'
-             ],
-             FALSE, 0.99),
-
-            (1, 'HIGH_LATENCY', 'high', 2,
-             ARRAY['192.168.10.10'],
-             'Camera-Block-A showing high latency (>100ms). May affect video streaming quality.',
-             ARRAY[
-               'Check for bandwidth saturation on links',
-               'Verify no network loops causing congestion',
-               'Check for faulty hardware (cables, ports)',
-               'Monitor for unusual traffic patterns',
-               'Check if latency is consistent or intermittent',
-               'Verify QoS configurations if applicable',
-               'Consider upgrading link capacity if persistent'
-             ],
-             FALSE, 0.87),
-
-            (1, 'CABLE_FAILURE', 'high', 7,
-             ARRAY['192.168.10.50'],
-             'AP-Library showing intermittent connectivity. Possible cable fault on Gi0/6.',
-             ARRAY[
-               'Check physical connection at device side',
-               'Check physical connection at switch side',
-               'Verify link LEDs on both switch port and device NIC',
-               'Try different cable if available',
-               'Check switch port configuration',
-               'Check for port errors using switch commands',
-               'Try different switch port'
-             ],
-             TRUE, 0.82)
         """)
 
     conn.commit()
@@ -240,7 +135,7 @@ def init_db():
 # OTP store
 otp_store = {}
 
-# ── AUTH ──────────────────────────────────────────
+# ── AUTH ──────────────────────────────────────────────────────
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.json
@@ -259,23 +154,20 @@ def login():
         conn.close()
 
         if user:
-            return jsonify({
-                'success': True,
-                'user': dict(user)
-            })
+            return jsonify({'success': True, 'user': dict(user)})
         else:
             return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# ── DIAGNOSTIC SESSIONS ───────────────────────────
+# ── SESSIONS ──────────────────────────────────────────────────
 @app.route('/api/sessions', methods=['GET'])
 def get_sessions():
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT 
+            SELECT
                 ds.id,
                 ds.status,
                 ds.scan_type,
@@ -303,7 +195,7 @@ def get_sessions():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# ── FAULTS ────────────────────────────────────────
+# ── FAULTS ────────────────────────────────────────────────────
 @app.route('/api/faults', methods=['GET'])
 def get_faults():
     session_id = request.args.get('session_id')
@@ -314,7 +206,7 @@ def get_faults():
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         query = """
-            SELECT 
+            SELECT
                 df.id,
                 df.session_id,
                 df.fault_type,
@@ -324,6 +216,7 @@ def get_faults():
                 df.affected_macs,
                 df.troubleshooting_steps,
                 df.is_resolved,
+                df.status,
                 df.confidence,
                 df.resolution_notes,
                 TO_CHAR(df.detected_at, 'HH12:MI AM') as detected_at,
@@ -346,8 +239,19 @@ def get_faults():
             query += " AND df.is_resolved = FALSE"
         elif resolved == 'true':
             query += " AND df.is_resolved = TRUE"
+        # resolved == 'all' → no filter
 
-        query += " ORDER BY CASE df.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, df.detected_at DESC"
+        query += """
+            ORDER BY
+                CASE df.severity
+                    WHEN 'critical' THEN 1
+                    WHEN 'high' THEN 2
+                    WHEN 'medium' THEN 3
+                    WHEN 'low' THEN 4
+                    ELSE 5
+                END,
+                df.detected_at DESC
+        """
 
         cur.execute(query, params)
         faults = [dict(row) for row in cur.fetchall()]
@@ -358,7 +262,54 @@ def get_faults():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# ── UPDATE FAULT STATUS ───────────────────────────
+# ── UPDATE FAULT STATUS (main route used by app) ──────────────
+@app.route('/api/faults/<int:fault_id>/status', methods=['PUT'])
+def update_fault_status(fault_id):
+    data = request.json
+    new_status = data.get('status')  # 'Open', 'In Progress', 'Resolved'
+    notes = data.get('notes', '')
+
+    if new_status not in ['Open', 'In Progress', 'Resolved']:
+        return jsonify({'success': False, 'message': 'Invalid status'}), 400
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        if new_status == 'Resolved':
+            cur.execute("""
+                UPDATE detected_faults
+                SET status = %s,
+                    is_resolved = TRUE,
+                    resolved_at = NOW(),
+                    resolution_notes = %s
+                WHERE id = %s
+            """, (new_status, notes, fault_id))
+        elif new_status == 'Open':
+            cur.execute("""
+                UPDATE detected_faults
+                SET status = %s,
+                    is_resolved = FALSE,
+                    resolved_at = NULL,
+                    resolution_notes = NULL
+                WHERE id = %s
+            """, (new_status, fault_id))
+        else:
+            cur.execute("""
+                UPDATE detected_faults
+                SET status = %s,
+                    is_resolved = FALSE
+                WHERE id = %s
+            """, (new_status, fault_id))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True, 'status': new_status})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# ── RESOLVE FAULT (legacy compatibility) ─────────────────────
 @app.route('/api/faults/<int:fault_id>/resolve', methods=['PUT'])
 def resolve_fault(fault_id):
     data = request.json
@@ -368,8 +319,9 @@ def resolve_fault(fault_id):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            UPDATE detected_faults 
+            UPDATE detected_faults
             SET is_resolved = TRUE,
+                status = 'Resolved',
                 resolved_at = NOW(),
                 resolution_notes = %s
             WHERE id = %s
@@ -381,14 +333,14 @@ def resolve_fault(fault_id):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# ── DEVICES PER SESSION ───────────────────────────
+# ── DEVICES PER SESSION ───────────────────────────────────────
 @app.route('/api/sessions/<int:session_id>/devices', methods=['GET'])
 def get_session_devices(session_id):
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT 
+            SELECT
                 id, hostname, ip_address, mac_address,
                 subnet, switch_ip, switch_port, status,
                 device_type, manufacturer, response_time_ms,
@@ -405,16 +357,15 @@ def get_session_devices(session_id):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# ── STATS ─────────────────────────────────────────
+# ── STATS ─────────────────────────────────────────────────────
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Get latest session stats
         cur.execute("""
-            SELECT 
+            SELECT
                 total_devices_found,
                 total_faults_detected,
                 critical_faults,
@@ -429,10 +380,9 @@ def get_stats():
         """)
         stats = cur.fetchone()
 
-        # Get unresolved faults count
         cur.execute("""
-            SELECT COUNT(*) as unresolved 
-            FROM detected_faults 
+            SELECT COUNT(*) as unresolved
+            FROM detected_faults
             WHERE is_resolved = FALSE
         """)
         unresolved = cur.fetchone()
@@ -448,7 +398,7 @@ def get_stats():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# ── FORGOT PASSWORD ───────────────────────────────
+# ── FORGOT PASSWORD ───────────────────────────────────────────
 @app.route('/api/forgot-password', methods=['POST'])
 def forgot_password():
     data = request.json
@@ -493,10 +443,7 @@ Campus Connect Care - GEC Idukki
             server.quit()
 
             masked = email[:2] + '****' + email[email.index('@'):]
-            return jsonify({
-                'success': True,
-                'message': f'OTP sent to {masked}'
-            })
+            return jsonify({'success': True, 'message': f'OTP sent to {masked}'})
         except Exception:
             return jsonify({
                 'success': True,
