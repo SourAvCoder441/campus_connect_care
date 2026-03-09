@@ -12,7 +12,7 @@ def get_connection():
         conn = psycopg2.connect(
             dbname=os.getenv('DB_NAME', 'campusdb'),
             user=os.getenv('DB_USER', 'campusadmin'),
-            password=os.getenv('DB_PASSWORD', 'root'),
+            password=os.getenv('DB_PASSWORD', 'campus123'),
             host=os.getenv('DB_HOST', 'localhost'),
             port=os.getenv('DB_PORT', '5432')
         )

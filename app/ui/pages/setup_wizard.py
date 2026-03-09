@@ -30,36 +30,51 @@ class SetupWorker(QThread):
         self.password = password
     
     def run(self):
-        self.progress.emit("Discovering local network...")
-        success, msg = network_discovery.discover_local_network()
-        
-        if not success:
-            self.finished_signal.emit(False, msg)
-            return
-        
-        self.progress.emit("Testing firewall connectivity...")
-        if not network_discovery.ping_test(self.firewall_ip):
-            self.finished_signal.emit(False, "FIREWALL_UNREACHABLE")
-            return
-        
-        self.progress.emit("Fetching firewall interfaces...")
-        success, msg = network_discovery.discover_firewall_interfaces(
-            self.firewall_ip, self.username, self.password
-        )
-        
-        if not success:
-            self.finished_signal.emit(False, msg)
-            return
-        
-        self.progress.emit("Validating PC in DHCP leases...")
-        in_dhcp, dhcp_msg = network_discovery.validate_pc_in_firewall(
-            self.firewall_ip, self.username, self.password
-        )
-        
-        self.progress.emit("Saving configuration...")
-        network_discovery.save_to_database()
-        
-        self.finished_signal.emit(True, dhcp_msg)
+        """Main worker thread - discovers network topology"""
+        try:
+            self.progress.emit("Discovering local network...")
+            success, msg = network_discovery.discover_local_network()
+            
+            if not success:
+                self.finished_signal.emit(False, msg)
+                return
+            
+            # Discover ALL local interfaces (including diagnostic interface)
+            self.progress.emit("Finding all network interfaces...")
+            success_diag, msg_diag = network_discovery.discover_all_local_interfaces()
+            self.progress.emit(f"Interface discovery: {msg_diag}")
+            
+            self.progress.emit("Testing firewall connectivity...")
+            if not network_discovery.ping_test(self.firewall_ip):
+                self.finished_signal.emit(False, "FIREWALL_UNREACHABLE")
+                return
+            
+            self.progress.emit("Fetching firewall interfaces...")
+            success, msg = network_discovery.discover_firewall_interfaces(
+                self.firewall_ip, self.username, self.password
+            )
+            
+            if not success:
+                self.finished_signal.emit(False, msg)
+                return
+            
+            self.progress.emit("Validating PC in DHCP leases...")
+            in_dhcp, dhcp_msg = network_discovery.validate_pc_in_firewall(
+                self.firewall_ip, self.username, self.password
+            )
+            
+            self.progress.emit("Saving configuration...")
+            # Don't save sudo password yet - will be added in switch step
+            save_success = network_discovery.save_to_database(sudo_password=None)
+            
+            if not save_success:
+                self.finished_signal.emit(False, "SAVE_FAILED")
+                return
+            
+            self.finished_signal.emit(True, dhcp_msg)
+            
+        except Exception as e:
+            self.finished_signal.emit(False, f"ERROR: {str(e)}")
 
 
 class SetupWizard(QWidget):
@@ -69,6 +84,7 @@ class SetupWizard(QWidget):
         self.current_step = 0
         self.firewall_creds = {}
         self.switch_configs = []
+        self.switch_inputs = {}  # Store switch input widgets
         
         self.init_ui()
     
@@ -161,7 +177,7 @@ class SetupWizard(QWidget):
         # Info Box
         info = QLabel(
             "Enter your pfSense firewall credentials to auto-discover "
-            "network topology. The wizard will detect WAN, LAN, and OPT interfaces."
+            "network topology. The wizard will detect WAN, LAN, OPT interfaces, and VLANs."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color: #64748b; padding: 10px; background-color: #f0f9ff; border-radius: 6px;")
@@ -174,9 +190,10 @@ class SetupWizard(QWidget):
         layout.addWidget(ip_label)
         
         self.firewall_ip = QLineEdit()
-        self.firewall_ip.setPlaceholderText("e.g., 192.168.10.1 or 192.168.99.1")
+        self.firewall_ip.setPlaceholderText("e.g., 192.168.10.1")
         self.firewall_ip.setFixedHeight(45)
         self.firewall_ip.setStyleSheet(self._input_style())
+        self.firewall_ip.setText("192.168.10.1")  # Default based on your setup
         layout.addWidget(self.firewall_ip)
         
         # Username
@@ -346,7 +363,7 @@ class SetupWizard(QWidget):
         layout.addWidget(title)
         
         desc = QLabel(
-            "For each internal subnet (LAN, OPT1, etc.), specify the "
+            "For each internal subnet (LAN, OPT1, VLANs, etc.), specify the "
             "management IP of the connected switch, or select 'No Switch'."
         )
         desc.setWordWrap(True)
@@ -520,6 +537,7 @@ class SetupWizard(QWidget):
             'NO_IP_ADDRESS': "Could not determine local IP address.",
             'FIREWALL_UNREACHABLE': f"Cannot reach firewall at {self.firewall_creds['ip']}\n\nPlease check:\n• Firewall is powered on\n• Network cable is connected\n• IP address is correct",
             'AUTH_FAILED': "Authentication failed.\n\nPlease check username and password.",
+            'SAVE_FAILED': "Failed to save configuration to database.\n\nPlease check database connection.",
         }
         
         msg = error_messages.get(error_code, f"Error: {error_code}")
@@ -531,18 +549,30 @@ class SetupWizard(QWidget):
         """Display discovery results"""
         info = network_discovery.local_info
         interfaces = network_discovery.firewall_interfaces
+        vlans = network_discovery.vlan_interfaces
         
         # Build results text
         text = f"""LOCAL PC:
-  IP: {info.ip_address}
+  Management IP: {info.ip_address}
+  Management Interface: {info.interface}
   Gateway: {info.gateway}
-  Interface: {info.interface}
-  DHCP Mode: {'Yes' if info.is_dhcp else 'No (Static IP)'}
-
-FIREWALL INTERFACES:
-"""
+  DHCP Mode: {'Yes' if info.is_dhcp else 'No (Static IP)'}"""
+        
+        # Add diagnostic interface if found and different from management
+        if info.diagnostic_ip and info.diagnostic_ip != info.ip_address:
+            text += f"\n  Diagnostic IP: {info.diagnostic_ip}"
+            text += f"\n  Diagnostic Interface: {info.diagnostic_interface}"
+        
+        text += f"\n\nFIREWALL INTERFACES ({len(interfaces)}):\n"
+        
         for iface in interfaces:
             text += f"  {iface.interface_type} ({iface.name}): {iface.ip_address} - {iface.subnet_cidr}\n"
+        
+        # Add VLAN information
+        if vlans:
+            text += f"\nVLAN INTERFACES ({len(vlans)}):\n"
+            for vlan in vlans:
+                text += f"  {vlan.interface_type} ({vlan.name}): VLAN {vlan.vlan_id} - {vlan.ip_address}\n"
         
         text += f"\nDHCP VALIDATION: {dhcp_message}"
         
@@ -567,135 +597,189 @@ FIREWALL INTERFACES:
             if item.widget():
                 item.widget().deleteLater()
         
-        # Add config for each non-WAN interface
+        # Add config for each non-WAN interface (including VLANs)
         self.switch_inputs = {}
         
+        # Add main interfaces
         for iface in network_discovery.firewall_interfaces:
             if iface.interface_type == 'WAN':
                 continue
             
-            frame = QFrame()
-            frame.setStyleSheet("""
-                QFrame {
-                    background-color: white;
-                    border-radius: 8px;
-                    border: 1px solid #e2e8f0;
-                    padding: 10px;
-                }
-            """)
-            frame_layout = QVBoxLayout(frame)
+            self._add_switch_config_row(iface.interface_type, iface.subnet_cidr, iface)
+        
+        # Add VLAN interfaces
+        for vlan in network_discovery.vlan_interfaces:
+            if vlan.interface_type == 'WAN_VLAN':
+                continue
             
-            # Subnet info
-            subnet_label = QLabel(f"{iface.interface_type}: {iface.subnet_cidr}")
-            subnet_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
-            subnet_label.setStyleSheet("color: #0f172a;")
-            frame_layout.addWidget(subnet_label)
-            
-            # Gateway info
-            gw_label = QLabel(f"Gateway: {iface.ip_address}")
-            gw_label.setStyleSheet("color: #64748b; font-family: Consolas;")
-            frame_layout.addWidget(gw_label)
-            
-            # Switch IP input
-            input_layout = QHBoxLayout()
-            
-            has_switch = QCheckBox("Has Managed Switch")
-            has_switch.setChecked(True)
-            has_switch.setStyleSheet("color: #475569;")
-            input_layout.addWidget(has_switch)
-            
-            switch_ip = QLineEdit()
-            switch_ip.setPlaceholderText("Switch management IP (e.g., 192.168.10.2)")
-            switch_ip.setStyleSheet(self._input_style())
-            switch_ip.setFixedHeight(40)
-            input_layout.addWidget(switch_ip, stretch=1)
-            
-            # Enable/disable IP input based on checkbox
-            has_switch.toggled.connect(switch_ip.setEnabled)
-            
-            frame_layout.addLayout(input_layout)
-            
-            # Credentials (collapsed by default, optional)
-            self.switch_inputs[iface.interface_type] = {
-                'frame': frame,
-                'has_switch': has_switch,
-                'ip': switch_ip,
-                'subnet_id': iface  # Will map to DB ID later
-            }
-            
-            self.switches_container.addWidget(frame)
+            self._add_switch_config_row(vlan.interface_type, vlan.subnet_cidr, vlan)
         
         self.stack.setCurrentIndex(3)
     
-    def save_switches(self):
-        """Save switch configurations"""
-        configs = []
+    def _add_switch_config_row(self, iface_type: str, subnet_cidr: str, iface_obj):
+        """Add a switch configuration row for an interface"""
+        frame = QFrame()
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border-radius: 8px;
+                border: 1px solid #e2e8f0;
+                padding: 10px;
+            }
+        """)
+        frame_layout = QVBoxLayout(frame)
         
-        for iface_type, widgets in self.switch_inputs.items():
-            if widgets['has_switch'].isChecked():
-                ip = widgets['ip'].text().strip()
-                if ip:
-                    configs.append({
-                        'subnet_type': iface_type,
-                        'ip': ip,
-                        'username': 'sourav',  # Default from your setup
-                        'password': 'exam'
-                    })
+        # Subnet info
+        subnet_label = QLabel(f"{iface_type}: {subnet_cidr}")
+        subnet_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        subnet_label.setStyleSheet("color: #0f172a;")
+        frame_layout.addWidget(subnet_label)
         
-        # Save to database
-        try:
-            conn = get_connection()
-            cur = conn.cursor()
-            
-            # Get interface IDs from database
-            cur.execute("SELECT id, interface_type FROM firewall_interfaces")
-            id_map = {row[1]: row[0] for row in cur.fetchall()}
-            
-            for config in configs:
-                subnet_id = id_map.get(config['subnet_type'])
-                if subnet_id:
-                    # Test connectivity first
-                    success, sw_type, details = network_discovery.test_switch_connectivity(
-                        config['ip'], config['username'], config['password']
-                    )
-                    
-                    cur.execute("""
-                        INSERT INTO managed_switches 
-                        (subnet_id, switch_ip, switch_type, ssh_username, 
-                         ssh_password_encrypted, last_seen)
-                        VALUES (%s, %s, %s, %s, %s, NOW())
-                    """, (
-                        subnet_id,
-                        config['ip'],
-                        sw_type if success else 'Unknown',
-                        config['username'],
-                        'ENCRYPTED:' + config['password']  # TODO: Proper encryption
-                    ))
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            self.show_summary()
-            self.stack.setCurrentIndex(4)
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save: {str(e)}")
+        # Gateway info if available
+        if hasattr(iface_obj, 'ip_address') and iface_obj.ip_address:
+            gw_label = QLabel(f"Gateway: {iface_obj.ip_address}")
+            gw_label.setStyleSheet("color: #64748b; font-family: Consolas;")
+            frame_layout.addWidget(gw_label)
+        
+        # Switch IP input
+        input_layout = QHBoxLayout()
+        
+        has_switch = QCheckBox("Has Managed Switch")
+        has_switch.setChecked(True)
+        has_switch.setStyleSheet("color: #475569;")
+        input_layout.addWidget(has_switch)
+        
+        switch_ip = QLineEdit()
+        # Default hint based on subnet
+        subnet_prefix = '.'.join(subnet_cidr.split('.')[:3])
+        switch_ip.setPlaceholderText(f"Switch IP (e.g., {subnet_prefix}.2)")
+        switch_ip.setStyleSheet(self._input_style())
+        switch_ip.setFixedHeight(40)
+        input_layout.addWidget(switch_ip, stretch=1)
+        
+        # Enable/disable IP input based on checkbox
+        has_switch.toggled.connect(switch_ip.setEnabled)
+        
+        frame_layout.addLayout(input_layout)
+        
+        # Store reference
+        self.switch_inputs[iface_type] = {
+            'frame': frame,
+            'has_switch': has_switch,
+            'ip': switch_ip,
+            'subnet_id': iface_obj
+        }
+        
+        self.switches_container.addWidget(frame)
     
+    def save_switches(self):
+            """Save switch configurations with sudo password"""
+            configs = []
+            sudo_password = "exam"  # Default from your requirement
+            
+            for iface_type, widgets in self.switch_inputs.items():
+                if widgets['has_switch'].isChecked():
+                    ip = widgets['ip'].text().strip()
+                    if ip:
+                        configs.append({
+                            'subnet_type': iface_type,
+                            'ip': ip,
+                            'username': 'sourav',
+                            'password': 'exam',
+                            'sudo_password': sudo_password
+                        })
+            
+            try:
+                conn = get_connection()
+                cur = conn.cursor()
+                
+                # Update network_setup with sudo password
+                cur.execute("""
+                    UPDATE network_setup 
+                    SET switch_sudo_password = %s 
+                    WHERE setup_completed = TRUE
+                """, (sudo_password,))
+                
+                # Get ALL interface IDs from firewall_interfaces (simplified!)
+                cur.execute("SELECT id, interface_name, interface_type FROM firewall_interfaces")
+                id_map = {}
+                for row in cur.fetchall():
+                    id_map[row[1]] = row[0]  # Map by interface_name
+                    id_map[row[2]] = row[0]  # Map by interface_type
+                
+                saved_count = 0
+                for config in configs:
+                    subnet_id = id_map.get(config['subnet_type'])
+                    
+                    if not subnet_id:
+                        # Try fuzzy matching as fallback
+                        cur.execute("""
+                            SELECT id FROM firewall_interfaces 
+                            WHERE interface_type ILIKE %s OR interface_name ILIKE %s
+                            LIMIT 1
+                        """, (f"%{config['subnet_type']}%", f"%{config['subnet_type']}%"))
+                        result = cur.fetchone()
+                        if result:
+                            subnet_id = result[0]
+                    
+                    if subnet_id:
+                        # Test connectivity
+                        success, sw_type, details = network_discovery.test_switch_connectivity(
+                            config['ip'], 
+                            config['username'], 
+                            config['password'],
+                            config['sudo_password']
+                        )
+                        
+                        cur.execute("""
+                            INSERT INTO managed_switches 
+                            (subnet_id, switch_ip, switch_type, ssh_username, 
+                             ssh_password_encrypted, sudo_password, last_seen)
+                            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                        """, (
+                            subnet_id,
+                            config['ip'],
+                            sw_type if success else 'Unknown',
+                            config['username'],
+                            'ENCRYPTED:' + config['password'],
+                            config['sudo_password']
+                        ))
+                        saved_count += 1
+                
+                conn.commit()
+                cur.close()
+                conn.close()
+                
+                QMessageBox.information(self, "Success", f"Saved {saved_count} switch configurations")
+                self.show_summary()
+                self.stack.setCurrentIndex(4)
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                
     def show_summary(self):
         """Show final summary"""
         info = network_discovery.local_info
         interfaces = network_discovery.firewall_interfaces
+        vlans = network_discovery.vlan_interfaces
         
         text = f"""Network configuration saved successfully!
 
 MASTER PC: {info.ip_address}
 GATEWAY: {info.gateway}
+DIAGNOSTIC IP: {info.diagnostic_ip or 'Same as management'}
 
-CONFIGURED SUBNETS:
+CONFIGURED INTERFACES:
 """
         for iface in interfaces:
             text += f"  • {iface.interface_type}: {iface.subnet_cidr}\n"
+        
+        if vlans:
+            text += "\nCONFIGURED VLANS:\n"
+            for vlan in vlans:
+                text += f"  • VLAN {vlan.vlan_id} ({vlan.name}): {vlan.subnet_cidr}\n"
         
         text += "\nYou can modify this configuration later from Settings."
         
