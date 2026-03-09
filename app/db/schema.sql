@@ -169,6 +169,10 @@ CREATE TABLE IF NOT EXISTS detected_faults (
     resolved_at TIMESTAMP,
     resolved_by INTEGER REFERENCES users(id),
     resolution_notes TEXT,
+    status VARCHAR(20) DEFAULT 'Open',
+    assigned_to INTEGER REFERENCES users(id),
+    assigned_by INTEGER REFERENCES users(id),
+    assigned_at TIMESTAMP,
     
     detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

@@ -7,11 +7,13 @@ from PySide6.QtWidgets import (
     QProgressBar, QTreeWidget, QTreeWidgetItem,
     QSplitter, QTabWidget, QHeaderView, QApplication
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QColor, QTextCursor, QPalette
 import time
+import os
 from datetime import datetime
 from collections import defaultdict
+import requests
 
 # Import session management
 try:
@@ -115,7 +117,15 @@ class DiagnosticsPage(QWidget):
         
         self.current_session_id = None
         self.worker = None
+        self.api_base_url = os.getenv("IT_STAFF_API_BASE_URL", "http://127.0.0.1:5000").rstrip("/")
+        self.issue_rows = []
         self.init_ui()
+        self.load_it_staff_users()
+        self.refresh_issues()
+
+        self.issue_refresh_timer = QTimer(self)
+        self.issue_refresh_timer.timeout.connect(self.refresh_issues)
+        self.issue_refresh_timer.start(15000)
         
         # Show initial message
         self.log_message(f"Campus Connect-Care Diagnostic Console v2.0")
@@ -301,6 +311,70 @@ class DiagnosticsPage(QWidget):
         devices_layout.addWidget(self.devices_tree)
 
         self.tabs.addTab(devices_widget, "💻 DEVICES")
+
+        # === ISSUES TAB (ASSIGNMENT + STATUS TRACKING) ===
+        issues_widget = QWidget()
+        issues_layout = QVBoxLayout(issues_widget)
+        issues_layout.setContentsMargins(0, 0, 0, 0)
+        issues_layout.setSpacing(10)
+
+        issues_controls = QHBoxLayout()
+        self.staff_combo = QComboBox()
+        self.staff_combo.setFixedHeight(36)
+        self.staff_combo.setMinimumWidth(220)
+        self.staff_combo.addItem("Select IT staff", None)
+        issues_controls.addWidget(self.staff_combo)
+
+        self.assign_btn = QPushButton("ASSIGN SELECTED ISSUE")
+        self.assign_btn.setFixedHeight(36)
+        self.assign_btn.setCursor(Qt.PointingHandCursor)
+        self.assign_btn.clicked.connect(self.assign_selected_issue)
+        issues_controls.addWidget(self.assign_btn)
+
+        self.refresh_issues_btn = QPushButton("REFRESH")
+        self.refresh_issues_btn.setFixedHeight(36)
+        self.refresh_issues_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_issues_btn.clicked.connect(self.refresh_issues)
+        issues_controls.addWidget(self.refresh_issues_btn)
+        issues_controls.addStretch()
+        issues_layout.addLayout(issues_controls)
+
+        self.issues_tree = QTreeWidget()
+        self.issues_tree.setHeaderLabels([
+            "ID", "Fault Type", "Severity", "Status", "Assigned To", "Session", "Detected"
+        ])
+        self.issues_tree.setAlternatingRowColors(True)
+        self.issues_tree.setColumnWidth(0, 60)
+        self.issues_tree.setColumnWidth(1, 190)
+        self.issues_tree.setColumnWidth(2, 90)
+        self.issues_tree.setColumnWidth(3, 120)
+        self.issues_tree.setColumnWidth(4, 140)
+        self.issues_tree.setColumnWidth(5, 70)
+        self.issues_tree.setStyleSheet("""
+            QTreeWidget {
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                background: white;
+                font-size: 12px;
+                alternate-background-color: #f8fafc;
+            }
+            QTreeWidget::item { padding: 7px; }
+            QHeaderView::section {
+                background-color: #f1f5f9;
+                padding: 8px;
+                border: none;
+                border-bottom: 2px solid #cbd5e1;
+                font-weight: bold;
+            }
+        """)
+        self.issues_tree.itemClicked.connect(self.on_issue_selected)
+        issues_layout.addWidget(self.issues_tree)
+
+        self.issue_status_label = QLabel("Issue sync: ready")
+        self.issue_status_label.setStyleSheet("color: #64748b; font-family: Consolas; font-size: 11px;")
+        issues_layout.addWidget(self.issue_status_label)
+
+        self.tabs.addTab(issues_widget, "ISSUES")
 
         # Add tabs to main splitter (top section)
         self.main_splitter.addWidget(self.tabs)
@@ -589,7 +663,8 @@ class DiagnosticsPage(QWidget):
         # Update summary and devices
         self.update_summary(results)
         self.update_devices()
-        
+        self.refresh_issues()
+
         # Switch to Summary tab
         self.tabs.setCurrentIndex(1)
         
@@ -822,6 +897,108 @@ class DiagnosticsPage(QWidget):
             item = QTreeWidgetItem([f"Error loading devices: {str(e)}", "", "", "", ""])
             self.devices_tree.addTopLevelItem(item)
 
+    def load_it_staff_users(self):
+        """Load IT staff users from API for assignment dropdown."""
+        try:
+            resp = requests.get(f"{self.api_base_url}/api/it-staff", timeout=5)
+            data = resp.json()
+            self.staff_combo.clear()
+            self.staff_combo.addItem("Select IT staff", None)
+            if data.get("success"):
+                for staff in data.get("staff", []):
+                    self.staff_combo.addItem(staff.get("username", "unknown"), staff.get("id"))
+            self.issue_status_label.setText("Issue sync: IT staff loaded")
+        except Exception as e:
+            self.issue_status_label.setText(f"Issue sync warning: staff load failed ({e})")
+
+    def refresh_issues(self):
+        """Fetch issues from API and update issue table."""
+        try:
+            params = {"resolved": "all"}
+            if self.current_session_id:
+                params["session_id"] = str(self.current_session_id)
+
+            resp = requests.get(f"{self.api_base_url}/api/faults", params=params, timeout=8)
+            data = resp.json()
+
+            self.issues_tree.clear()
+            self.issue_rows = data.get("faults", []) if data.get("success") else []
+
+            for fault in self.issue_rows:
+                item = QTreeWidgetItem([
+                    str(fault.get("id", "")),
+                    str(fault.get("fault_type", "")),
+                    str(fault.get("severity", "")),
+                    str(fault.get("status", "")),
+                    str(fault.get("assigned_to_username") or "Unassigned"),
+                    str(fault.get("session_id", "")),
+                    str(fault.get("detected_at", "")),
+                ])
+                item.setData(0, Qt.UserRole, fault)
+                self.issues_tree.addTopLevelItem(item)
+
+            self.issue_status_label.setText(
+                f"Issue sync: {len(self.issue_rows)} issues loaded at {datetime.now().strftime('%H:%M:%S')}"
+            )
+        except Exception as e:
+            self.issue_status_label.setText(f"Issue sync error: {e}")
+
+    def on_issue_selected(self, item, column):
+        """Show selected issue details in the bottom detail panel."""
+        fault = item.data(0, Qt.UserRole) or {}
+        text = "ISSUE DETAILS\n"
+        text += "=" * 60 + "\n\n"
+        text += f"ID: {fault.get('id', '')}\n"
+        text += f"Type: {fault.get('fault_type', '')}\n"
+        text += f"Severity: {fault.get('severity', '')}\n"
+        text += f"Status: {fault.get('status', '')}\n"
+        text += f"Assigned To: {fault.get('assigned_to_username') or 'Unassigned'}\n"
+        text += f"Assigned At: {fault.get('assigned_at') or 'N/A'}\n"
+        text += f"Description: {fault.get('description', '')}\n"
+        self.details_text.setText(text)
+
+    def assign_selected_issue(self):
+        """Assign selected issue to the selected IT staff via API."""
+        selected = self.issues_tree.currentItem()
+        if not selected:
+            self.issue_status_label.setText("Issue sync: select an issue first")
+            return
+
+        assignee_id = self.staff_combo.currentData()
+        if not assignee_id:
+            self.issue_status_label.setText("Issue sync: select an IT staff user first")
+            return
+
+        fault = selected.data(0, Qt.UserRole) or {}
+        fault_id = fault.get("id")
+        if not fault_id:
+            self.issue_status_label.setText("Issue sync: invalid issue id")
+            return
+
+        payload = {
+            "assignee_id": assignee_id,
+            "assigned_by": self.current_user.get("id")
+        }
+
+        try:
+            resp = requests.put(
+                f"{self.api_base_url}/api/faults/{fault_id}/assign",
+                json=payload,
+                timeout=8
+            )
+            data = resp.json()
+            if data.get("success"):
+                self.issue_status_label.setText(
+                    f"Issue sync: issue #{fault_id} assigned successfully"
+                )
+                self.refresh_issues()
+            else:
+                self.issue_status_label.setText(
+                    f"Issue sync: assignment failed ({data.get('message', 'unknown error')})"
+                )
+        except Exception as e:
+            self.issue_status_label.setText(f"Issue sync error: {e}")
+
     def on_summary_item_clicked(self, item, column):
         """Show fault details when clicked in summary"""
         fault_data = item.data(0, Qt.UserRole)
@@ -898,3 +1075,5 @@ class DiagnosticsPage(QWidget):
         self.progress_bar.setValue(0)
         self.status_label.setText("Ready")
         self.details_text.clear()
+
+

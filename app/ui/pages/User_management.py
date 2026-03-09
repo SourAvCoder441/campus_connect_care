@@ -6,8 +6,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
+import re
 
 from app.users.create_it_staff import create_it_staff
+from app.utils.email_sender import send_welcome_email
 
 
 class UserManagementPage(QWidget):
@@ -106,6 +108,31 @@ class UserManagementPage(QWidget):
         """)
         form_layout.addWidget(self.username_input)
 
+        # Email
+        email_label = QLabel("EMAIL ADDRESS")
+        email_label.setFont(QFont("Consolas", 9))
+        email_label.setStyleSheet("color: #64748b;")
+        form_layout.addWidget(email_label)
+
+        self.email_input = QLineEdit()
+        self.email_input.setPlaceholderText("e.g., staff@college.edu")
+        self.email_input.setFixedHeight(45)
+        self.email_input.setStyleSheet("""
+            QLineEdit {
+                padding: 0 15px;
+                font-size: 13px;
+                border: 2px solid #e2e8f0;
+                border-radius: 8px;
+                background-color: #f8fafc;
+                font-family: 'Consolas', monospace;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0ea5e9;
+                background-color: white;
+            }
+        """)
+        form_layout.addWidget(self.email_input)
+
         # Password
         pass_label = QLabel("ACCESS KEY")
         pass_label.setFont(QFont("Consolas", 9))
@@ -176,7 +203,7 @@ class UserManagementPage(QWidget):
         req_title.setStyleSheet("color: #0284c7;")
         req_layout.addWidget(req_title)
         
-        req_text = QLabel("• Alphanumeric username\n• 8+ character password\n• Auto-generated access level: IT_SUPPORT")
+        req_text = QLabel("• Alphanumeric username\n• Valid email address\n• 8+ character password\n• Auto-generated access level: IT_SUPPORT")
         req_text.setFont(QFont("Consolas", 9))
         req_text.setStyleSheet("color: #0ea5e9; line-height: 1.6;")
         req_layout.addWidget(req_text)
@@ -275,11 +302,22 @@ class UserManagementPage(QWidget):
 
     def create_user(self):
         u = self.username_input.text().strip()
+        e = self.email_input.text().strip().lower()
         p = self.password_input.text().strip()
 
-        if not u or not p:
+        if not u or not e or not p:
             QMessageBox.warning(self, "Validation Error", 
                 "⚠ All fields required. Please complete the form.")
+            return
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", u):
+            QMessageBox.warning(self, "Validation Error", 
+                "⚠ Username must contain only letters, numbers, and underscore.")
+            return
+
+        if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", e):
+            QMessageBox.warning(self, "Validation Error", 
+                "⚠ Invalid email format.")
             return
         
         if len(p) < 8:
@@ -289,11 +327,30 @@ class UserManagementPage(QWidget):
 
         try:
             create_it_staff(u, p)
+            email_warning = None
+            try:
+                send_welcome_email(
+                    to_email=e,
+                    username=u,
+                    password=p,
+                    role="ITSupport"
+                )
+            except Exception as email_err:
+                email_warning = str(email_err)
+
             QMessageBox.information(self, "Success", 
                 f"✓ Personnel account '{u}' created successfully.\n\nAccess level: IT_SUPPORT")
             self.username_input.clear()
+            self.email_input.clear()
             self.password_input.clear()
             self.load_user_data()  # Refresh table
+
+            if email_warning:
+                QMessageBox.warning(
+                    self,
+                    "Email Warning",
+                    f"Account created, but credentials email could not be sent to {e}.\n\n{email_warning}"
+                )
         except Exception as e:
             QMessageBox.critical(self, "Error", 
                 f"✗ Account creation failed:\n{str(e)}")

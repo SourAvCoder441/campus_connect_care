@@ -105,7 +105,10 @@ def init_db():
             resolved_by INTEGER REFERENCES users(id),
             resolution_notes TEXT,
             detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status VARCHAR(20) DEFAULT 'Open'
+            status VARCHAR(20) DEFAULT 'Open',
+            assigned_to INTEGER REFERENCES users(id),
+            assigned_by INTEGER REFERENCES users(id),
+            assigned_at TIMESTAMP
         );
     """)
 
@@ -113,6 +116,18 @@ def init_db():
     cur.execute("""
         ALTER TABLE detected_faults
         ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'Open';
+    """)
+    cur.execute("""
+        ALTER TABLE detected_faults
+        ADD COLUMN IF NOT EXISTS assigned_to INTEGER REFERENCES users(id);
+    """)
+    cur.execute("""
+        ALTER TABLE detected_faults
+        ADD COLUMN IF NOT EXISTS assigned_by INTEGER REFERENCES users(id);
+    """)
+    cur.execute("""
+        ALTER TABLE detected_faults
+        ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP;
     """)
 
     # Sync status with is_resolved
@@ -134,6 +149,21 @@ def init_db():
 
 # OTP store
 otp_store = {}
+
+
+def normalize_status(status: str) -> str:
+    """Map client status variants into canonical values."""
+    if not status:
+        return ''
+
+    value = status.strip().lower().replace('_', ' ')
+    if value in ('open', 'pending'):
+        return 'Open'
+    if value in ('in progress', 'inprogress', 'in-progress'):
+        return 'In Progress'
+    if value in ('resolved', 'closed', 'done'):
+        return 'Resolved'
+    return ''
 
 # ── AUTH ──────────────────────────────────────────────────────
 @app.route('/api/login', methods=['POST'])
@@ -200,6 +230,8 @@ def get_sessions():
 def get_faults():
     session_id = request.args.get('session_id')
     resolved = request.args.get('resolved', 'false')
+    assigned_to = request.args.get('assigned_to')
+    only_assigned = request.args.get('only_assigned', 'false').lower()
 
     try:
         conn = get_connection()
@@ -219,6 +251,11 @@ def get_faults():
                 df.status,
                 df.confidence,
                 df.resolution_notes,
+                df.assigned_to,
+                au.username AS assigned_to_username,
+                df.assigned_by,
+                abu.username AS assigned_by_username,
+                TO_CHAR(df.assigned_at, 'DD Mon YYYY HH12:MI AM') as assigned_at,
                 TO_CHAR(df.detected_at, 'HH12:MI AM') as detected_at,
                 TO_CHAR(df.resolved_at, 'DD Mon HH12:MI AM') as resolved_at,
                 dd.hostname as device_name,
@@ -227,6 +264,8 @@ def get_faults():
                 dd.switch_port
             FROM detected_faults df
             LEFT JOIN diagnostic_devices dd ON df.primary_device_id = dd.id
+            LEFT JOIN users au ON df.assigned_to = au.id
+            LEFT JOIN users abu ON df.assigned_by = abu.id
             WHERE 1=1
         """
         params = []
@@ -240,6 +279,12 @@ def get_faults():
         elif resolved == 'true':
             query += " AND df.is_resolved = TRUE"
         # resolved == 'all' → no filter
+
+        if assigned_to:
+            query += " AND df.assigned_to = %s"
+            params.append(int(assigned_to))
+        elif only_assigned == 'true':
+            query += " AND df.assigned_to IS NOT NULL"
 
         query += """
             ORDER BY
@@ -262,11 +307,85 @@ def get_faults():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+
+@app.route('/api/it-staff', methods=['GET'])
+def get_it_staff():
+    try:
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT id, username, role, email
+            FROM users
+            WHERE role = 'ITSupport'
+            ORDER BY username
+        """)
+        staff = [dict(row) for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return jsonify({'success': True, 'staff': staff})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/faults/<int:fault_id>/assign', methods=['PUT'])
+def assign_fault(fault_id):
+    data = request.json or {}
+    assignee_id = data.get('assignee_id')
+    assigned_by = data.get('assigned_by')
+
+    if not assignee_id:
+        return jsonify({'success': False, 'message': 'assignee_id is required'}), 400
+    try:
+        assignee_id = int(assignee_id)
+        assigned_by = int(assigned_by) if assigned_by is not None else None
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Invalid assignee_id or assigned_by'}), 400
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute(
+            "SELECT id FROM users WHERE id = %s AND role = 'ITSupport'",
+            (assignee_id,)
+        )
+        assignee = cur.fetchone()
+        if not assignee:
+            cur.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'Invalid IT staff assignee'}), 400
+
+        cur.execute("""
+            UPDATE detected_faults
+            SET assigned_to = %s,
+                assigned_by = %s,
+                assigned_at = NOW(),
+                status = CASE
+                    WHEN status IS NULL OR status = '' THEN 'Open'
+                    ELSE status
+                END
+            WHERE id = %s
+            RETURNING id, assigned_to, assigned_by, status
+        """, (assignee_id, assigned_by, fault_id))
+        row = cur.fetchone()
+
+        if not row:
+            cur.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'Fault not found'}), 404
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True, 'fault': dict(row)})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 # ── UPDATE FAULT STATUS (main route used by app) ──────────────
 @app.route('/api/faults/<int:fault_id>/status', methods=['PUT'])
 def update_fault_status(fault_id):
     data = request.json
-    new_status = data.get('status')  # 'Open', 'In Progress', 'Resolved'
+    new_status = normalize_status(data.get('status'))  # Open/In Progress/Resolved
     notes = data.get('notes', '')
 
     if new_status not in ['Open', 'In Progress', 'Resolved']:
