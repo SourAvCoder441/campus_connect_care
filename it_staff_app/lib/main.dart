@@ -1,15 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'screens/login_screen.dart';
-import 'services/auth_service.dart';
 
 void main() {
-  runApp(
-    ChangeNotifierProvider(
-      create: (_) => AuthService(),
-      child: const CampusConnectApp(),
-    ),
-  );
+  runApp(const CampusConnectApp());
 }
 
 class CampusConnectApp extends StatelessWidget {
@@ -22,10 +15,11 @@ class CampusConnectApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1A237E),
-          brightness: Brightness.dark,
+          seedColor: const Color(0xFFE1306C),
+          brightness: Brightness.light,
         ),
         useMaterial3: true,
+        fontFamily: 'SF Pro Display',
       ),
       home: const LoginScreen(),
     );
