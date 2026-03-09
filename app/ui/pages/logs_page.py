@@ -1,15 +1,21 @@
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QTextEdit, 
-    QPushButton, QHBoxLayout, QFrame, QGraphicsDropShadowEffect
+    QPushButton, QHBoxLayout, QFrame, QGraphicsDropShadowEffect,
+    QTreeWidget, QTreeWidgetItem, QSplitter, QComboBox,
+    QDateTimeEdit, QLineEdit, QGroupBox, QGridLayout
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QDateTime
 from PySide6.QtGui import QFont, QColor
+import json
+
+from app.db.connection import get_connection
 
 
 class LogsPage(QWidget):
     def __init__(self):
         super().__init__()
         self.init_ui()
+        self.load_logs()
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -42,8 +48,21 @@ class LogsPage(QWidget):
 
         header_layout.addStretch()
 
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["All Logs", "INFO Only", "WARN Only", "ERROR Only", "AUDIT Only"])
+        self.filter_combo.setFixedHeight(35)
+        self.filter_combo.currentTextChanged.connect(self.apply_filters)
+        header_layout.addWidget(self.filter_combo)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search logs...")
+        self.search_input.setFixedHeight(35)
+        self.search_input.setFixedWidth(200)
+        self.search_input.textChanged.connect(self.apply_filters)
+        header_layout.addWidget(self.search_input)
+
         refresh_btn = QPushButton("REFRESH")
-        refresh_btn.setFixedHeight(40)
+        refresh_btn.setFixedHeight(35)
         refresh_btn.setCursor(Qt.PointingHandCursor)
         refresh_btn.setStyleSheet("""
             QPushButton {
@@ -64,54 +83,197 @@ class LogsPage(QWidget):
 
         main_layout.addWidget(header)
 
-        # Log Console
-        console_card = QFrame()
-        console_card.setStyleSheet("""
+        # Main content with splitter
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #e2e8f0;
+                height: 2px;
+            }
+        """)
+
+        # Log tree
+        self.log_tree = QTreeWidget()
+        self.log_tree.setHeaderLabels(["Time", "Level", "Component", "Message", "User", "Session"])
+        self.log_tree.setStyleSheet("""
+            QTreeWidget {
+                background-color: white;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                padding: 5px;
+            }
+            QTreeWidget::item {
+                padding: 5px;
+                border-bottom: 1px solid #f1f5f9;
+            }
+            QTreeWidget::item:selected {
+                background-color: #e0f2fe;
+            }
+        """)
+        self.log_tree.setColumnWidth(0, 180)  # Time
+        self.log_tree.setColumnWidth(1, 70)   # Level
+        self.log_tree.setColumnWidth(2, 100)  # Component
+        self.log_tree.setColumnWidth(3, 400)  # Message
+        self.log_tree.setColumnWidth(4, 80)   # User
+        self.log_tree.setColumnWidth(5, 70)   # Session
+        self.log_tree.itemClicked.connect(self.on_log_selected)
+
+        # Details panel
+        details_frame = QFrame()
+        details_frame.setStyleSheet("""
             QFrame {
-                background-color: #0f172a;
-                border-radius: 12px;
-                border: 1px solid #334155;
+                background-color: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
             }
         """)
-        
-        console_layout = QVBoxLayout(console_card)
-        console_layout.setContentsMargins(20, 20, 20, 20)
+        details_layout = QVBoxLayout(details_frame)
 
-        self.log_display = QTextEdit()
-        self.log_display.setReadOnly(True)
-        self.log_display.setFont(QFont("Consolas", 10))
-        self.log_display.setStyleSheet("""
+        details_header = QLabel("LOG DETAILS")
+        details_header.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        details_header.setStyleSheet("color: #0f172a; padding: 5px;")
+        details_layout.addWidget(details_header)
+
+        self.details_text = QTextEdit()
+        self.details_text.setReadOnly(True)
+        self.details_text.setFont(QFont("Consolas", 10))
+        self.details_text.setStyleSheet("""
             QTextEdit {
-                background-color: transparent;
-                color: #cbd5e1;
-                border: none;
-                line-height: 1.6;
+                background-color: white;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 10px;
             }
         """)
-        console_layout.addWidget(self.log_display)
+        details_layout.addWidget(self.details_text)
 
-        main_layout.addWidget(console_card, stretch=1)
+        splitter.addWidget(self.log_tree)
+        splitter.addWidget(details_frame)
+        splitter.setSizes([500, 200])
+
+        main_layout.addWidget(splitter, stretch=1)
         self.setLayout(main_layout)
 
-        # Load initial logs
-        self.load_logs()
-
     def load_logs(self):
-        # Sample logs - replace with database query
-        logs = """[2025-01-30 14:32:01] ◈ INFO: System initialization complete
-[2025-01-30 14:32:05] ◈ INFO: Database connection established (campusdb)
-[2025-01-30 14:35:12] ● AUTH: User 'netadmin_1' authenticated successfully
-[2025-01-30 14:35:15] ◈ INFO: Session created (ID: 1024)
-[2025-01-30 14:42:33] ⚠ WARN: SNMP timeout on device 192.168.1.5
-[2025-01-30 14:45:01] ◈ INFO: Topology scan initiated
-[2025-01-30 14:45:12] ◈ INFO: Scan complete - 24 devices discovered
-[2025-01-30 15:01:45] ● AUTH: User 'itsupport_03' login attempt failed
-[2025-01-30 15:02:12] ◈ INFO: Password recovery email dispatched"""
+        """Load logs from database"""
+        self.log_tree.clear()
         
-        # Apply color formatting
-        formatted = logs.replace("◈ INFO:", "<span style='color: #0ea5e9;'>◈ INFO:</span>")
-        formatted = formatted.replace("● AUTH:", "<span style='color: #10b981;'>● AUTH:</span>")
-        formatted = formatted.replace("⚠ WARN:", "<span style='color: #f59e0b;'>⚠ WARN:</span>")
-        formatted = formatted.replace("login attempt failed", "<span style='color: #ef4444;'>login attempt failed</span>")
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+            
+            # Get logs with user and session info
+            cur.execute("""
+                SELECT 
+                    sl.log_time,
+                    sl.log_level,
+                    sl.component,
+                    sl.message,
+                    u.username,
+                    sl.session_id,
+                    sl.details
+                FROM system_logs sl
+                LEFT JOIN users u ON sl.user_id = u.id
+                ORDER BY sl.log_time DESC
+                LIMIT 1000
+            """)
+            
+            logs = cur.fetchall()
+            cur.close()
+            conn.close()
+            
+            for log in logs:
+                log_time, level, component, message, username, session_id, details = log
+                
+                # Format time
+                time_str = log_time.strftime('%Y-%m-%d %H:%M:%S') if log_time else 'Unknown'
+                
+                item = QTreeWidgetItem([
+                    time_str,
+                    level,
+                    component,
+                    message[:100] + '...' if len(message) > 100 else message,
+                    username or 'System',
+                    str(session_id) if session_id else ''
+                ])
+                
+                # Color based on level
+                if level == 'ERROR':
+                    item.setForeground(1, QColor(239, 68, 68))  # Red
+                elif level == 'WARNING':
+                    item.setForeground(1, QColor(245, 158, 11))  # Yellow
+                elif level == 'INFO':
+                    item.setForeground(1, QColor(16, 185, 129))  # Green
+                elif level == 'AUDIT':
+                    item.setForeground(1, QColor(139, 92, 246))  # Purple
+                
+                # Store details for later
+                item.setData(0, Qt.UserRole, details)
+                
+                self.log_tree.addTopLevelItem(item)
+            
+            self.log_tree.sortItems(0, Qt.DescendingOrder)
+            
+        except Exception as e:
+            error_item = QTreeWidgetItem(["Error", "", "", f"Failed to load logs: {str(e)}", "", ""])
+            self.log_tree.addTopLevelItem(error_item)
+
+    def apply_filters(self):
+        """Apply level filter and search"""
+        filter_text = self.filter_combo.currentText()
+        search_text = self.search_input.text().lower()
         
-        self.log_display.setHtml(f"<pre>{formatted}</pre>")
+        level_filter = None
+        if "INFO Only" in filter_text:
+            level_filter = "INFO"
+        elif "WARN Only" in filter_text:
+            level_filter = "WARNING"
+        elif "ERROR Only" in filter_text:
+            level_filter = "ERROR"
+        elif "AUDIT Only" in filter_text:
+            level_filter = "AUDIT"
+        
+        for i in range(self.log_tree.topLevelItemCount()):
+            item = self.log_tree.topLevelItem(i)
+            show = True
+            
+            # Apply level filter
+            if level_filter and item.text(1) != level_filter:
+                show = False
+            
+            # Apply search filter
+            if search_text:
+                matches = False
+                for col in range(4):  # Search in time, level, component, message
+                    if search_text in item.text(col).lower():
+                        matches = True
+                        break
+                if not matches:
+                    show = False
+            
+            item.setHidden(not show)
+
+    def on_log_selected(self, item, column):
+        """Show log details when selected"""
+        details = item.data(0, Qt.UserRole)
+        
+        if details:
+            try:
+                # Try to parse as JSON
+                if isinstance(details, str):
+                    details_json = json.loads(details)
+                    formatted = json.dumps(details_json, indent=2)
+                else:
+                    formatted = str(details)
+                self.details_text.setText(formatted)
+            except:
+                self.details_text.setText(str(details))
+        else:
+            # Show basic info
+            text = f"Time: {item.text(0)}\n"
+            text += f"Level: {item.text(1)}\n"
+            text += f"Component: {item.text(2)}\n"
+            text += f"User: {item.text(4)}\n"
+            text += f"Session: {item.text(5)}\n"
+            text += f"\nMessage:\n{item.text(3)}"
+            self.details_text.setText(text)

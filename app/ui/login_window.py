@@ -9,6 +9,7 @@ import sys
 
 from app.auth.login import login
 from app.session.session_log import log_session
+from app.session.session_manager import session  # 👈 IMPORT SESSION
 from app.ui.main_window import MainWindow
 from app.core.network_discovery import network_discovery
 
@@ -521,6 +522,8 @@ class LoginWindow(QWidget):
         
         username = self.username_input.text().strip()
         password = self.password_input.text().strip()
+        
+        # Authenticate user
         user = login(username, password)
 
         if not user:
@@ -530,7 +533,17 @@ class LoginWindow(QWidget):
             self.password_input.setFocus()
             return
 
+        # 👇 CRITICAL: Set the user in session
+        session.login(
+            user_id=user['id'],
+            username=username,
+            role=user['role']
+        )
+
+        # Save credentials if requested
         self.save_credentials(username)
+        
+        # Log session to database
         log_session(user["id"])
 
         # Check if network setup is required
