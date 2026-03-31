@@ -38,4 +38,43 @@ cd campus_connect_care)
 python3 -m venv venv
 source venv/bin/activate   # On Windows: venv\Scripts\activate
 
+### 3. Install dependencies
+
+``bash
+pip install -r requirements.txt
+
+### 4. Set up PostgreSQL database 
+
+### 5. Configure the network setup
+
+Run the application and the built‑in Setup Wizard will guide you through:
+
+Firewall IP, SSH credentials (default for pfSense: admin / pfsense)
+
+Master PC’s management and diagnostic IPs (can be the same or different)
+
+Managed switches (IP, SSH username/password, sudo password if needed)
+
+Firewall interfaces (LAN, OPT1, OPT2, VLANs)
+
+⚠️ The wizard expects the network components (firewall, switches) to be running and accessible when you enter the details – whether virtual or physical.
+
+
+### 6. Running the Diagnostic Tool
+
+``bash
+python -m app.main
+
+
+
+📄 License
+This project is open source for educational and research purposes. See the repository for details.
+
+👥 Contributors
+Adithyan Manoj
+Deion Tomson
+Nivedhya K V
+Sourav Saitus
+Under the guidance of Dr. Reena Nair, Department of Computer Science & Engineering, Government Engineering College, Idukki.
+
 
