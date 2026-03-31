@@ -71,9 +71,9 @@ python -m app.main
 This project is open source for educational and research purposes. See the repository for details.
 
 👥 Contributors
-Adithyan Manoj
-Deion Tomson
-Nivedhya K V
+Adithyan Manoj,
+Deion Tomson,
+Nivedhya K V,
 Sourav Saitus
 Under the guidance of Dr. Reena Nair, Department of Computer Science & Engineering, Government Engineering College, Idukki.
 
