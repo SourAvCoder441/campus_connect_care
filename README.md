@@ -11,6 +11,7 @@ A campus network monitoring system that detects common network faults and provid
 - Detects **IP conflicts**, **network loops**, **high latency**, **packet loss**, **DHCP exhaustion**, **bandwidth saturation**, and **cable failures**
 - Discovers devices and maps them to switch ports (including unmanaged switches)
 - Generates plain‑English troubleshooting steps for each fault
+- Predicts topology (bus, star, tree and hybrid)
 - Maintains historical diagnostic sessions in a PostgreSQL database
 
 ##  Requirements (for both virtual and real networks)
